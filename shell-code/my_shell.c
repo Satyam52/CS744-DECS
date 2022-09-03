@@ -5,10 +5,14 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h> 
+#include<signal.h>
 
 #define MAX_INPUT_SIZE 1024
 #define MAX_TOKEN_SIZE 64
 #define MAX_NUM_TOKENS 64
+
+// Gloabal Variables
+int pid_arr[64] = { [0 ... 63] = -1 }, background_flag = 0;
 
 /* Splits the string by space and returns the array of tokens
 *
@@ -41,28 +45,46 @@ char** tokenize(char* line)
 	return tokens;
 }
 
+void sigint_handler(int signal_code) {
+	printf("\n$ ");
+	// char buff[3];
+	// buff[0] = '\n';	buff[1] = '$'; buff[2] = ' ';
+	// write(0, buff, sizeof buff);
+	fflush(stdout);
+}
+
+void child_handler() {
+	int status = 0;
+	int found_bg = 0;
+	for (int i = 0;i < 64;i++) {
+		if (pid_arr[i] != -1) {
+			found_bg = 0;
+			status = waitpid(pid_arr[i], NULL, WNOHANG);
+			if (status > 0) {
+				pid_arr[i] = -1;
+				printf("Finished - %d \n", status);
+				printf("Shell: Background process finished \n");
+			}
+		}
+	}
+	if (found_bg != 0 && background_flag != 0) {
+		printf("$ ");
+		fflush(stdout);
+	}
+}
+
 // int background_flag = 0;
 int main(int argc, char* argv[]) {
 	char  line[MAX_INPUT_SIZE];
 	char** tokens;
-	int i, background_flag = 0, exit_flag = 0;
-	int pid_arr[64] = { [0 ... 63] = -1 };
+	int i, exit_flag = 0;
 	int status;
 	char* ampersand = "&";
-
+	int bg_grp_id = -1;
+	signal(SIGCHLD, child_handler);  // Cleaning process using SIGNAL from child
+	signal(SIGINT, sigint_handler);
 
 	while (1) {
-		// Cleaning Stuffs at start of new command
-		for (int i = 0;i < 64;i++) {
-			if (pid_arr[i] != -1) {
-				status = waitpid(pid_arr[i], NULL, WNOHANG);
-				if (status > 0) {
-					pid_arr[i] = -1;
-					printf("Shell: Background process finished \n");
-				}
-			}
-		}
-
 		background_flag = 0; // default foreground
 
 		/* BEGIN: TAKING INPUT */
@@ -70,28 +92,38 @@ int main(int argc, char* argv[]) {
 		printf("$ ");
 		scanf("%[^\n]", line);
 		getchar();
-		printf("Command entered: %s (remove this debug output later)\n", line);
 		/* END: TAKING INPUT */
 
 		line[strlen(line)] = '\n'; //terminate with new line
 		tokens = tokenize(line);
 
-		for (i = 0;tokens[i] != NULL;i++) {
-			printf("found token %s (remove this debug output later)\n", tokens[i]);
-		}
+		// for (i = 0;tokens[i] != NULL;i++) {
+		// 	printf("found token %s (remove this debug output later)\n", tokens[i]);
+		// }
 		// **********************START***************************
-		printf("*****************************************Start*******************************************\n");
 
 		//do whatever you want with the commands, here we just print them
 
 		/* BEGIN Checking exit or empty command */
-		if (tokens[0] == NULL || (strcmp(tokens[0], "exit") == 0)) { // No command entered
+		if (tokens[0] == NULL || (strcmp(tokens[0], "exit") == 0) || (strcmp(tokens[0], "ebg") == 0)) { // No command entered
 			if (tokens[0] == NULL) {
 				continue;
 			}
-			else {
+			else if ((strcmp(tokens[0], "exit") == 0)) {
 				exit_flag = 1;
 				break;
+			}
+			else {
+				if (bg_grp_id != -1) {
+					if (killpg(bg_grp_id, SIGKILL) == 0) {
+						printf("Success \n");
+						bg_grp_id = -1;
+					}
+					else {
+						printf("Faild \n");
+					};
+				}
+				continue;
 			}
 		}
 		/* END Checking exit or empty command */
@@ -124,41 +156,50 @@ int main(int argc, char* argv[]) {
 			fprintf(stderr, "%s\n", "Child creation failed at fork\n");
 			_exit(1);
 		}
-		else if (fc == 0) {  // Child
+		else if (fc == 0) {  // Child		
+			// printf("CHILD ID -> %d\n", getpid());
+			if (background_flag == 0) {
+				sleep(10);
+			}
+			else {
+				sleep(5);
+			}
 			execvp(tokens[0], tokens);
 			printf("Command execution failed\n");
 			_exit(1);
-
 		}
 		else { // Parent
-			if (background_flag == 0) {
+			if (background_flag == 0) { // foreground
 				wait(NULL);
 			}
 			else { // background process
+				if (bg_grp_id == -1) {
+					bg_grp_id = fc;
+				}
+
 				status = waitpid(fc, NULL, WNOHANG);
 				if (status == 0) {
 					for (int i = 0;i < 64;i++) { // add the pid to reap later
 						if (pid_arr[i] < 0) {
 							pid_arr[i] = fc;
+							status = setpgid(fc, bg_grp_id);
 							break;
 						}
 					}
-					printf("[1] \t %d\n $ ", fc);
+					printf("[1] \t %d\n", fc);
 				}
 			}
 		}
-
-		printf("**************************************************END****************************************\n");
-
-
+		fflush(stdout);
 		// Freeing the allocated memory	
 		for (i = 0;tokens[i] != NULL;i++) {
 			free(tokens[i]);
 		}
 		free(tokens);
-
 	}
-	if (exit_flag == 1) {
+
+
+	if (exit_flag == 1) {  // exited using exit 
 		// Freeing the allocated memory	
 		for (i = 0;tokens[i] != NULL;i++) {
 			free(tokens[i]);
@@ -175,6 +216,7 @@ int main(int argc, char* argv[]) {
 				pid_arr[i] = -1;
 			}
 		}
+		exit(0);
 	}
 	// **********************END***************************
 	return 0;
