@@ -1,6 +1,4 @@
-# Bootcamp Week 3: Simple HTTP server
-
-This week, we will modify our simple echo server of last week to build a simple HTTP server, serving HTML web pages. While your previous client and server were exchanging simple text, we will now make them exchange HTTP requests and responses.
+# Bootcamp Multi-threaded Web Server
 
 ## HTTP server specification
 
